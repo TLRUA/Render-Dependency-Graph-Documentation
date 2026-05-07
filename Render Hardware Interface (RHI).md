@@ -1,15 +1,14 @@
-# Render Hardware Interface (RHI)
+# 渲染硬件接口（RHI）
 
-The original RHI was designed based on the D3D11 API, including some resource management and command interfaces. Since Unreal Engine is a ubiquitous
-tool that supports many platforms like mobile, console and PC in which then can use (DirectX, Vulkan, OpenGL, Metal). To address this Unreal abstracted an
-interface between all these API’s so they could keep the Rendering code as comprehensive as possible.
+> 出处：本文档翻译自 staticJPL 的 **Render Dependency Graph Documentation** 项目，原仓库：https://github.com/staticJPL/Render-Dependency-Graph-Documentation 。翻译在尊重原意的基础上，对部分表述做了中文化整理。
 
-This achieved using different render threads as shown below:
+最初的 RHI 是基于 D3D11 API 设计的，其中包含一些资源管理与命令接口。Unreal Engine 是一个支持移动端、主机和 PC 等多平台的通用工具，而这些平台又可能使用 DirectX、Vulkan、OpenGL、Metal 等不同图形 API。为了解决这一问题，Unreal 在渲染代码与这些 API 之间抽象出一层接口，使渲染代码尽可能保持统一和可理解。
+
+这种抽象会通过下图所示的不同线程协作来完成：
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RHIUnrealDiagram.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/e97260a557e345d37c2bb0b6352c82d35a4138df/Diagrams/RHIUnrealDiagram.png)
 
-We have a Game thread, Render thread and RHI Thread. The important thing to understand is that anything that’s rendered has a twin object between game
-thread and the render thread aside from some other specific cases.
+这里有 Game Thread、Render Thread 和 RHI Thread。需要理解的重点是：除了少数特殊情况外，任何被渲染的对象，通常都会在游戏线程和渲染线程之间拥有一组对应的“镜像对象”。
 
 **Game Thread**
 - Primitive Components
@@ -20,17 +19,16 @@ thread and the render thread aside from some other specific cases.
 - Light Proxy
   
 **RHI Thread**
-- Translates RHI “immediate” instructions from the Rendering thread to GPU based on the API specified. Note RHI Immediate really means immediate it’s not the same as a regular RHI command which is usually deferred.
-- DX12, Vulkan and Host support parallelism and if a RHI immediate instruction is a generated parallel command then the RHI thread will translate it in parallel.
+- 根据指定的图形 API，把渲染线程发出的 RHI “immediate” 指令翻译给 GPU。注意，这里的 RHI Immediate 的确表示“立即”，它不同于通常会延迟执行的普通 RHI 命令。
+- DX12、Vulkan 和 Host 支持并行处理；如果某条 RHI immediate 指令生成了并行命令，那么 RHI 线程会并行翻译这些命令。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/Parallel CommandList RHI.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/e97260a557e345d37c2bb0b6352c82d35a4138df/Diagrams/Parallel%20CommandList%20RHI.png)
 
-## Basics of RHI
+## RHI 基础
 
 **FRenderResource**
 
-The `FRenderResource` is a rendering resource representation on the rendering thread. This resource is managed and passed by the rendering thread as the
-intermediate data between the game thread and
+`FRenderResource` 是渲染线程上的渲染资源表示。它由渲染线程管理和传递，可作为游戏线程与 RHI 线程之间的中间数据。
 
 ```cpp
 /**
@@ -92,13 +90,11 @@ void UpdateRHI();
 };
 ```
 
-There are many subclasses that inherit from this class so that the rendering thread can transfer data and operations of the game thread to the RHI thread at
-different levels of abstraction.
+有许多子类继承自 `FRenderResource`，这样渲染线程就能在不同抽象层级上，把游戏线程的数据和操作转交给 RHI 线程。
 
 **FRHIResource**
 
-`FRHIResource` is used for reference counting, delayed deletion, tracking, runtime data and marking. `FRHIResource` can be divided into state blocks, shader
-bindings, shaders, pipeline states, buffers, textures, views, and other miscellaneous items. It should be noted that we can create platform specific types with this class. Check the source for `FRHIUniformBuffer`.
+`FRHIResource` 用于引用计数、延迟删除、跟踪、运行时数据以及标记。`FRHIResource` 可以细分为状态块、shader 绑定、shader、管线状态、缓冲、纹理、视图和其他杂项。需要注意的是，我们可以用这个类创建平台特定类型；可以查看 `FRHIUniformBuffer` 的源码。
 
 ```cpp
 /** The base type of RHI resources. */
@@ -199,16 +195,10 @@ private:
 
 **FRHICommandList**
 
-The RHI Command list is an instruction queue that is used to manage and execute a group of command objects. The parent class for this is
-FRHICommandListBase. `FRHICommandListBase` defines the basic data (Command list, Device context) and interface (Command refresh, wait, enqueue,
-memory allocation etc..) which is required by the command queue. FRHIComputeCommandList defines the interfaces between compute shaders, state transition of GPU resources and the settings for the shader parameters. FRHICommandList defines the interface of common rendering pipelines, these include binding `Vertex Shaders`, `Pixel Shaders`,` Geometry Shaders`, Primitive Drawing, shader parameters, resource management etc.
+RHI Command List 是一个指令队列，用于管理和执行一组命令对象。它的父类是 `FRHICommandListBase`。`FRHICommandListBase` 定义了命令队列所需的基础数据（命令列表、设备上下文）和接口（命令刷新、等待、入队、内存分配等）。`FRHIComputeCommandList` 定义了计算 shader、GPU 资源状态转换以及 shader 参数设置之间的接口。`FRHICommandList` 则定义了常规渲染管线接口，包括绑定 `Vertex Shaders`、`Pixel Shaders`、`Geometry Shaders`，图元绘制、shader 参数设置和资源管理等。
 
-**RHIContext & DynamicRHI**
+**RHIContext 与 DynamicRHI**
 
-Lastly the `RHIContext` and `DynamicRHI` is another interface class which defines a set of graphics API related operations. As mentioned earlier some APIs can
-process commands in parallel and so this separate object is used to define that.
+最后，`RHIContext` 和 `DynamicRHI` 也是一组接口类，用来定义图形 API 相关操作。前面提到过，一些 API 可以并行处理命令，因此 Unreal 使用这些独立对象来表达对应能力。
 
-In summary, the RHI classes are the lowest level abstraction used in Unreal to talk to our Graphics APIs. The ones listed are the main ones you should be aware
-of. I’ve provided an in depth article that goes through the RHI in more detail under the references section. Also if the command lists doesn’t make sense just
-look up how a basic command list/buffer is processed to the GPU. You can look at one of the Graphics API’s to see how it’s queued.
-
+总结来说，RHI 类是 Unreal 与图形 API 通信时使用的最低层抽象。上面列出的几个类是你最应该了解的核心类型。我在参考资料章节中放了一篇更深入介绍 RHI 的文章。如果 command list 还不太好理解，可以先查阅基本的 command list / command buffer 是如何提交给 GPU 的，也可以参考任意一种图形 API 中命令入队与提交的流程。

@@ -1,97 +1,99 @@
-# Unreal Engine Rendering Pipeline
+# Unreal Engine 渲染管线
 
-Before getting into what the rendering pipeline of Unreal, the concept of a rendering pass and deferred rendering needs to addressed.
+> 出处：本文档翻译自 staticJPL 的 **Render Dependency Graph Documentation** 项目，原仓库：https://github.com/staticJPL/Render-Dependency-Graph-Documentation 。翻译在尊重原意的基础上，对部分表述做了中文化整理。
 
-A `Rendering Pass `is set of one to many draw calls executed on the GPU. Usually many draw calls are grouped together to ensure proper order of execution. This
-is because the output of a previous pass may be used as input for other sequential passes.
+在进入 Unreal 的渲染管线之前，需要先说明渲染 Pass 和延迟渲染的概念。
 
-`Deferred rendering` is a default method in Unreal that renders lights and materials in a separate pass. This separate pass waits for the base pass to accumulate
-the information about key information such as opacity, specular, diffusion, normals etc. An example below shows how the deferred rendering works.
+`Rendering Pass` 是一组在 GPU 上执行的 draw call，数量可以是一个，也可以是多个。通常会把许多 draw call 组织到一起，以保证执行顺序正确。这是因为前一个 pass 的输出可能会被后续 pass 当作输入使用。
+
+`Deferred rendering（延迟渲染）` 是 Unreal 默认使用的一种方法，它会把光照和材质放到单独的 pass 中处理。这个单独的 pass 会等待 base pass 先积累不透明度、高光、漫反射、法线等关键信息。下面的例子展示了延迟渲染的工作方式。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/DeferredRender.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/a49756d90f6362b9a8ab10e4ac16edddac530e03/Diagrams/DeferredRender.png)
 
-Instead of computing lighting and shading for each pixel as it rasterized, Unreal uses deferred rendering to capture information about the scene’s geometry into
-the “off-screen” Gbuffers. Then it’s used on a second pass to apply lighting and shading to the scene. The advantage of this is that it allows for more efficient use
-of the GPU. Separation of the geometry from lighting and shading can improve performance since it allows the GPU to process large number of lights and
-effects simultaneously. Additionally this allows for flexibility with dynamic lighting and complex lighting setups.
+Unreal 并不是在每个像素被光栅化时立即计算光照和着色，而是先使用延迟渲染把场景几何信息写入“离屏”的 GBuffer；随后在第二个 pass 中使用这些信息给场景应用光照和着色。这样做的优势是能更高效地使用 GPU。把几何信息与光照/着色分离后，GPU 可以同时处理大量光源和效果，从而提升性能。此外，它也让动态光照和复杂光照设置更加灵活。
 
-## Pass Order in Unreal Engine
+## Unreal Engine 中的 Pass 顺序
 
-These Passes may change but in general this is the order of things. I recommend downloading RenderDoc and hooking the engine to see for yourself.
+这些 Pass 可能会随着引擎版本或项目配置而变化，但大体顺序如下。我建议下载 RenderDoc 并挂接到引擎上亲自查看。
 
 **Base Pass**
-- Rendering final attributes of Opaque or Masked materials to the G-Buffer
-- Reading static lighting and saving it to the G-Buffer
-- Applying DBuffer decals
-- Applying fog
-- Calculating final velocity (from packed 3D velocity)
-- In forward renderer: dynamic lighting
+- 把不透明或 Masked 材质的最终属性渲染到 GBuffer。
+- 读取静态光照并保存到 GBuffer。
+- 应用 DBuffer decals。
+- 应用雾效。
+- 计算最终速度（来自打包后的 3D velocity）。
+- 在前向渲染器中：处理动态光照。
 
-In Deferred mode the base pass saves the properties of materials into the GBuffer as highlighted earlier and leaves it for calculation of lighting later on.
+在 Deferred 模式下，Base Pass 会像前面说明的那样把材质属性保存进 GBuffer，并把光照计算留到后续 pass。
 
-**Geometry Passes**
+**Geometry Passes（几何 Pass）**
 
-The Geometry pass is where the meshes get drawn and prioritized before lighting.
+几何 Pass 会绘制网格，并在光照之前对它们进行组织和优先级处理。
 
 #### PrePass
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/PrePass.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/a49756d90f6362b9a8ab10e4ac16edddac530e03/Diagrams/PrePass.png)
 
-Early Rendering of Depth Z-Buffer, which is used to optimize out meshes bases on translucency. This also is used to optimize out meshes that are hidden behind
-other meshes to cull them out (to not render them)
+PrePass 会提前渲染深度 Z-Buffer，用于根据透明度优化网格处理；它也会剔除被其他网格遮挡的网格，从而避免渲染不可见物体。
 
 **HZB**
-- Generates a hierarchy Z-Buffer
-The HZB is used by an occlusion culling method and by screen space techniques for ambient occlusion and reflection.
+- 生成分层 Z-Buffer。
+
+HZB 会用于遮挡剔除，也会被屏幕空间环境光遮蔽和屏幕空间反射等技术使用。
 
 **Render Velocities**
-- Saves velocity of each vertex (used later by motion blur and temporal anti-aliasing)
+- 保存每个顶点的速度，后续会被运动模糊和时间抗锯齿使用。
 
-`Velocity` is a buffer that measures the velocity of every moving vertex and saves it into the motion blur velocity buffer. The Velocity buffer compares the difference between the current frame and one frame behind to create a mask. In `Doom 2016`they use this mask to render only meshes that are not static in a
-scene to optimize rendering of meshes that moved in the next frame.
+`Velocity` 是一个缓冲，用来测量每个移动顶点的速度并写入运动模糊速度缓冲。Velocity Buffer 会比较当前帧与上一帧的差异来生成遮罩。在 `Doom 2016` 中，他们利用这种遮罩只渲染场景中非静态的网格，从而优化下一帧中发生移动的网格渲染。
 
 **Lighting Pass**
-This is the most hardcore part of the frame, especially with a lot of dynamic and shadowed light sources.
+
+这是整帧中最“重”的部分，尤其是在有大量动态光源和投影光源时。
+
 **Direct Lighting**
-- Optimized lighting in forward shading
+- 前向着色中的优化光照。
+
 **Non-Shadowed Lights**
-- Lights in deferred rendering that don’t cast shadows
+- 延迟渲染中不投射阴影的光源。
+
 **Shadowed Lights**
-- Lights that obviously cast dynamic shadows
+- 会投射动态阴影的光源。
+
 **Shadow Depths**
-- Generates depth maps for shadow-casting lights
+- 为投射阴影的光源生成深度图。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/ShadowProjection.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/a49756d90f6362b9a8ab10e4ac16edddac530e03/Diagrams/ShadowProjection.png)
 
 **Shadow Projection**
-- Final Rendering of Shadows
+- 最终渲染阴影。
 
 **Indirect Lighting**
 ![[Unreal Engine Render Dependency Graph/Diagrams/IndirectLighting.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/a49756d90f6362b9a8ab10e4ac16edddac530e03/Diagrams/IndirectLighting.png)
-- Screen space ambient occlusion
-- Decals (non-Buffer type)
+- 屏幕空间环境光遮蔽。
+- Decals（非 Buffer 类型）。
 
 **Composition After Lighting**
-- Handles subsurface scattering
+- 处理次表面散射。
 
 **Translucency and lighting**
-- Renders translucent materials
-- Lighting of materials that use surface forward shading.
+- 渲染半透明材质。
+- 处理使用 surface forward shading 的材质光照。
 
 **Reflections**
-- Reading and blending reflection capture actors’ results into a full-screen reflection buffer
+- 读取并混合 Reflection Capture Actor 的结果，写入全屏反射缓冲。
   
 **Screen Space Reflections**
-- Real-Time dynamic reflections
-- Done in Post process using a screen-space ray tracing technique
+- 实时动态反射。
+- 在后处理阶段使用屏幕空间光线追踪技术完成。
 
 **Post Processing**
-The post processing is the last pass of the render pipeline and is the part of the rendering process we will draw our triangle later on.
 
-- Depth of Field (BokehDOFRecombine)
-- Temporal anti-aliasing (TemporalAA)
-- Reading velocity values (VelocityFlatten)
-- Motion blur (MotionBlur)
-- Auto exposure (PostProcessEyeAdaptation)
-- Tone mapping (Tonemapper)
-- Upscaling from rendering resolution to display’s resolution (PostProcessUpscale)
+后处理是渲染管线的最后一个 pass，也是后文绘制三角形的位置。
+
+- 景深（BokehDOFRecombine）
+- 时间抗锯齿（TemporalAA）
+- 读取速度值（VelocityFlatten）
+- 运动模糊（MotionBlur）
+- 自动曝光（PostProcessEyeAdaptation）
+- 色调映射（Tonemapper）
+- 从渲染分辨率上采样到显示分辨率（PostProcessUpscale）
