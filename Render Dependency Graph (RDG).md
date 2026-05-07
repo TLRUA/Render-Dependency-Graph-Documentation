@@ -1,106 +1,91 @@
-# Render Dependency Graph (RDG)
+# 渲染依赖图（RDG）
 
-In 2017 Yuriy O’Donnell pioneered a render graph system while working for Frostbite and presented the first Frame Graph at GDC. Consequently the series of
-advantages this system provided was taken into Unreal Engine and as of 2021 the use of the render graph has become the standard in AAA game engine
-development.
+> 出处：本文档翻译自 staticJPL 的 **Render Dependency Graph Documentation** 项目，原仓库：https://github.com/staticJPL/Render-Dependency-Graph-Documentation 。翻译在尊重原意的基础上，对部分表述做了中文化整理。
 
-Riccardo Loggini's work below describes in detail how the Render Dependency Graph operates.
+2017 年，Yuriy O’Donnell 在 Frostbite 工作期间开创性地提出了 render graph 系统，并在 GDC 上展示了第一个 Frame Graph。这个系统带来的优势随后被 Unreal Engine 吸收；到 2021 年左右，使用 render graph 已经成为 AAA 游戏引擎开发中的常见标准。
+
+下面的内容基于 Riccardo Loggini 对 Render Dependency Graph 工作方式的详细介绍整理而来。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_CommandQueue.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_CommandQueue.png)
 
-### Properties
+### 特性
 
+Render Dependency Graph 会把渲染操作抽象成一种更简洁的形式，用于生成渲染代码。这种方式能提升代码清晰度，并且更便于调试：工具可以理解资源生命周期和渲染 pass 依赖，从而减少开发时间。
 
-The Render Dependency Graph abstracts render operations into a concise form for generating render code. This approach enhances code clarity and facilitates debuggability, enabling tools to interpret resource lifetimes and render pass dependencies effectively, thereby reducing development time.
-
-The next generation of Graphics APIs such as DX12 and Vulkan manage resource states transitions depending on operations performed.
+DX12 和 Vulkan 等新一代图形 API 会根据实际执行的操作来管理资源状态转换。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_ResourceTransition.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_ResourceTransition.png)
 
-Using render graphs allows operations to be handled automatically without manual input. As seen in the diagram above, a graphics programmer can declare
-what resources are needed for their shader input. Since Resource transitions are handled by the graph, you can visualize the
-green lines as “read” and red lines as “write” operations. Each render graph node has knowledge of these operations and allows it to place `Barriers` for
-resource transitions. This means that optimal barriers placed ensure there is an optimal command queue setup. So if `resource A` is used as a shader resource for
-`Pass 1` but as a render target for `pass 2` then you will still need a resource transition to render between these two targets. This reduces calls and saves memory
-allocation.
+使用 render graph 后，这些操作可以自动处理，而不需要程序员手动插入所有细节。以上图为例，图形程序员只需要声明 shader 输入需要哪些资源。由于资源转换由 graph 处理，你可以把绿线理解为“读”操作，把红线理解为“写”操作。每个 render graph 节点都知道自己的读写关系，因此可以放置用于资源状态转换的 `Barriers`。这意味着 RDG 能在更合适的位置放置 barrier，并得到更合理的 command queue 设置。例如，如果 `resource A` 在 `Pass 1` 中作为 shader resource 使用，而在 `pass 2` 中作为 render target 使用，那么这两个 pass 之间仍然需要一次资源转换。自动管理这些转换可以减少调用并节省内存分配。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_PassResourceLifetime.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_PassResourceLifetime.png)
 
-In the image above, for example, `resource A` is used only up to the third pass. On the other hand, `resource C` starts getting used in the fourth pass, and so its
-lifetime does not overlap `resource A`, meaning we have reuse of the same memory for both resources.
+以上图为例，`resource A` 只使用到第三个 pass；而 `resource C` 从第四个 pass 才开始使用。因此二者生命周期不重叠，就可以复用同一块内存。
 
-The same concept applies for resource A and D. In general there will be multiple ways to overlap our memory allocations, so we will also need clever ways to detect the best allocation strategy.
+`resource A` 与 `resource D` 也是同样的概念。一般来说，内存分配之间可能存在多种可重叠方式，因此还需要更智能的策略来检测最优分配方案。
 
+### RDG 资源
 
-### RDG Resources
+有些资源按“每帧”使用：严格来说，它们被称为 graph resource 或 transient resource，因为它们的生命周期可以完全由 render graph 管理。“每帧”资源的例子包括 `Gbuffers` 和 Camera Depth，它们会在后续光照 pass 中被使用。
 
-There are resources that are used on “Per-frame” basis: which are technically called graph or transient resources since their lifetime can be fully handled by the
-render graph. Some examples of “Per-Frame” resources are `Gbuffers` and Camera Depth which are deferred in the lighting pass.
-
-
-`Transient` resources are intended for a render graph to exist for a specific duration within a single frame, offering significant potential for memory reuse. There are other resources used externally and dependent on other resources, such as a window swapchain back buffer. In this case, the graph will limit itself to managing their state, known as `external resources`.
+`Transient` 资源只打算在单帧内的某个时间段存在，因此非常适合做内存复用。还有一些资源是在 RDG 之外创建、但被 RDG 使用或依赖的，例如窗口 swapchain 的 back buffer。对于这种资源，graph 通常只负责管理它们的状态；它们被称为 `external resources`。
 
 ### Transient Resource System
 
-The lifetime of transient resources can have what’s called “resource aliasing” for these resources (according to DX12 terminology).
+Transient 资源的生命周期允许进行所谓的“resource aliasing”（这是 DX12 术语）。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_Aliasing.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_Aliasing.png)
 
-Aliased resources can spare no more than 50% of the used resource allocation space, especially when using a render graph. They add an additional managing
-resource complexity to the scene, but if we want to spare memory, it's almost always worth it.
+资源别名化在 render graph 中尤其有价值，最多可以节省相当可观的资源分配空间。它会增加资源管理复杂度，但如果目标是节省内存，通常值得这么做。
 
-### Build Cross-Queues Synchronization
+### 构建跨队列同步
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_CommandDependencyTree.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_CommandDependencyTree.png)
 
-Lastly the graph allows us to use multiple command queues to run them in parallel. A dependency tree can aid in synchronizinng this mechanism to prevent
-race conditions on shared resources.
+最后，graph 允许我们使用多个 command queue 并行运行任务。依赖树可以帮助同步这些队列，避免共享资源上的竞争条件。
 
-An acyclic graph of render passes emerges after laying down every pass from the dependent queues. Each level of the tree is referred to as a dependency level and is comprised of passes independent of each with other in terms of their resource usage. This arrangement ensures that every pass in the same dependency level can potentially run asynchronously. While it's possible to have multiple passes belonging to the same queue in the same dependency level, this does not pose an issue.
+把来自相关队列的 pass 按依赖关系展开后，会形成一个无环图。树中的每一层称为一个依赖层级，层内 pass 在资源使用上彼此独立。因此，同一依赖层级内的 pass 理论上可以异步运行。即使同一队列中有多个 pass 落在同一依赖层级，也不一定会造成问题。
 
-As a consequence, a synchronization point with a GPU fence at the end of every dependency level can execute the needed resource transitions for every queue on a single graphics command list. This approach of course does not come for free, since using fences and syncing different command queues
-has a time cost. In addition to that, it will not always be the optimal and smallest amount of synchronizations, but it will produce acceptable performance to 
-should cover all the possible edge cases.
+因此，可以在每个依赖层级末尾放置一个带 GPU fence 的同步点，并在单个 graphics command list 上为所有队列执行所需的资源转换。当然，这种做法并非没有成本：fence 和跨队列同步会带来时间开销。它也不一定总能得到最优、最少的同步次数，但通常能以可接受的性能覆盖大多数边界情况。
 
-This highlights the advantages of the Render Graph in a nutshell.
+这概括了 Render Graph 的主要优势：
 
-- Better resource management,
-- Easier debugging tools
-- Parallel command list
-- Synchronization.
+- 更好的资源管理。
+- 更容易构建调试工具。
+- 支持并行 command list。
+- 自动化同步。
 
-### RDG Dynamics
+### RDG 动态流程
 
-Some new terminology needs to be addressed on top of what we already seen in the context of RDG.
+在 RDG 语境下，还需要补充一些新术语。
 
-- **View**: A single “viewport” looking at the FScene. When playing in split screen or rendering left and right eye in VR for example will contain have two views (Inside a view family).
+- **View**：观察 `FScene` 的单个“视口”。例如分屏游戏或 VR 中分别渲染左右眼时，一个 view family 内会包含两个 view。
 
-- **Vertex Factory**: A class that encapsulating vertex data to link as an input to a vertex shader. There are different vertex factory types depending on the kind of mesh we are rendering.
+- **Vertex Factory**：封装顶点数据并将其连接到顶点着色器输入的类。根据要渲染的 mesh 类型不同，会有不同类型的 vertex factory。
 
-- **Pooled Resource**: A graphics resource created and handled by the RDG. Their availability is guaranteed during RDG passes execution only.
+- **Pooled Resource**：由 RDG 创建和管理的图形资源。它们只保证在 RDG pass 执行期间可用。
 
-- **External Resource**: A graphics resource created independently from the RDG. 
+- **External Resource**：独立于 RDG 创建的图形资源。
 
-The workflow of Unreal Engines RDG can be Identified in a 3 step process:
+Unreal Engine 的 RDG 工作流可以分成三个阶段：
 
-**Setup phase**: Declares which render passes will exist and what resources will be accessed by them.
+**Setup phase（设置阶段）**：声明将要存在的渲染 pass，以及它们会访问哪些资源。
 
-**Compile phase**: Figures out the resources lifetime to make resource allocations accordingly.
+**Compile phase（编译阶段）**：推导资源生命周期，并据此进行资源分配。
 
-**Running/Execute phase**: All graph nodes get executed.
+**Running/Execute phase（运行/执行阶段）**：执行所有 graph 节点。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_Stages.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_Stages.png)
 
 ### Setup Stage
 
-The setup stage begins inside` FRenderModule` and is triggered by only the render threads main function. This builds passes for the visible views and all
-objects associated with them.
+Setup stage 从 `FRenderModule` 内部开始，并且只由渲染线程的主函数触发。它会为可见 view 以及与之关联的所有对象构建 pass。
 
 ```cpp
 FDeferredShadingSceneRenderer::Render(FRHICommandListImmediate& RHICmdList)
 ```
 
-The generic syntax for all RDG Passes will be created in this Generic Case
+所有 RDG Pass 的通用写法可以简化为下面这种形式：
 
 ```cpp
 // Instantiate the resources we need for our pass
@@ -114,100 +99,86 @@ Raster, [PassParameters, OtherDataToCapture](FRHICommandList&RHICmdList) {
 }
 ```
 
-- **Pass Name**: This will ultimately be represented by an object of type FRDGEventName containing the description of the pass. It is used for debugging and profiling tools.
+- **Pass Name**：最终会表示为 `FRDGEventName` 类型对象，其中包含该 pass 的描述。它用于调试和性能分析工具。
 
-- **Pass Parameters**: This object is expected to derive from a Shader Parameter Struct which has to be created with GraphBuilder.AllocParameters() and needs to be defined with the macro `BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters, `) The PassParameters will need to distinguish between at least a shader resources and render targets in order to detect proper transitions. (more on this subject in the Shader Parameters) and it can come from either:
-	- A shader uniform buffer proper to a shader (e.g. in the case we have only one shader like a compute shader) and so in this case the PassParameters will be of type FMyShader::FParameters.
-	- A generically defined shader uniform buffer, which will usually be defined in the source (.cpp) file. The usual name of these buffers will include“PassParameters” to specify that they are used for a whole pass instead of a single shader.
+- **Pass Parameters**：这个对象通常派生自 Shader Parameter Struct，需要通过 `GraphBuilder.AllocParameters()` 创建，并用 `BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters, )` 宏定义。PassParameters 至少需要区分 shader resource 和 render target，这样才能检测正确的资源转换（后文 Shader Parameters 章节会继续说明）。它可能来自：
+  - 某个 shader 自己的 uniform buffer。例如只有一个 compute shader 时，PassParameters 通常会是 `FMyShader::FParameters`。
+  - 在源码 `.cpp` 文件中通用定义的 shader uniform buffer。这类 buffer 的名称通常会包含 “PassParameters”，表示它用于整个 pass，而不是单个 shader。
 
-- **Pass Flags**: Set of flags of type ERDGPassFlags, they are mainly used to specify the kind of operations we will be doing inside the pass, e.g. raster, copy and compute.
+- **Pass Flags**：`ERDGPassFlags` 类型的一组标志，主要用于说明该 pass 内要执行哪类操作，例如 raster、copy 或 compute。
 
-- **Lambda Function**: This will contain the “body” of our pass, and so the logic to execute at run time. With the lambda we can capture any number of objects we want to later use to set up our rendering operations. Remember, after collection, they are not executed immediately and will be delayed but there are situations where it can be immediate.
+- **Lambda Function**：包含 pass 的“主体”，也就是运行时要执行的逻辑。lambda 可以捕获任意数量的对象，用于后续设置渲染操作。需要记住的是，在收集阶段之后，这些 lambda 通常不会立即执行，而是被延迟到合适阶段；不过在某些情况下也可能立即执行。
 
 ### Compile Phase
 
-The `compile` phase is completely autonomous and a “non-programmable” stage, in the sense that the render pass programmer does not have influence on it.
-In this phase the graph gets inspected to find all the possible flow optimizations, it will:
+`compile` 阶段是完全自动的，可以理解为“不可编程”的阶段：编写 render pass 的程序员通常无法直接影响它。在这一阶段，graph 会被检查以寻找可能的流程优化，它会：
 
-1. Exclude unreferenced but defined resources and passes: if we want to draw a second debug view of the scene, we might be interested to draw only certain passes for it.
-2. Compute and handle used resources lifetime.
-3. Resources Allocation.
-4. Build optimized resource transition graph.
+1. 剔除未被引用但已定义的资源和 pass。例如我们想绘制场景的第二个 debug view 时，可能只需要绘制其中某些 pass。
+2. 计算并处理使用中资源的生命周期。
+3. 分配资源。
+4. 构建优化后的资源转换图。
 
 ### Running Stage
 
-The Running Stage describes the time when the lambda function of an RDG pass gets executed. This will happen asynchronously and the exact
-moment is completely up to the RDG.
+Running Stage 指 RDG pass 的 lambda 函数实际执行的时间。它会异步发生，确切执行时机完全由 RDG 决定。
 
-When the lambda body executes, the available input will be the variables captured by the lambda and a command list (either `RHIComputeCommandList&` for
-`Compute `/ `AsyncCompute` workloads or `FRHICommandList&` for raster operations).
+当 lambda 主体执行时，可用输入包括 lambda 捕获的变量，以及一个 command list：`Compute` / `AsyncCompute` 工作负载会使用 `RHIComputeCommandList&`，光栅化操作会使用 `FRHICommandList&`。
 
-What essentially happens inside the lambda body is the following
+lambda 主体内部本质上会做这些事：
 
-- Set a pipeline state object, e.g. setting rasterizer, blend and depth/stencil states.
-- Set shaders and their attributes.
-- Selects what shaders to use and binds them to the current pipeline.
-- Defines parameters which means binding resources to the shader slots on the current command list.
-- Send copy/draw/dispatch commands and send render commands to the command list.
+- 设置 pipeline state object，例如 rasterizer、blend 和 depth/stencil state。
+- 设置 shader 及其属性。
+- 选择要使用的 shader，并把它们绑定到当前管线。
+- 定义参数，也就是把资源绑定到当前 command list 的 shader slot。
+- 发出 copy / draw / dispatch 命令，并把渲染命令提交到 command list。
 
 ### Execute Phase
 
-Execution phase is as simple as navigating through all the passes that survived the compile phase culling and executing the draw and dispatch commands on the
-list. Up until the execute phase all the resources were handled by opaque and abstract references, while at execute phase we access the real GPU API resources
-and set them in the pipeline. The preparation of command lists, on the CPU side, can be potentially parallelized quite a lot: in most of the cases, each pass
-command list setup is independent from each other. Aside from that, command list submissions on a single command queue is not thread safe, and in any case
-we would first need to determine if adding parallelization would bring significant gains.
+执行阶段基本上就是遍历所有通过 compile phase 剔除后保留下来的 pass，并在 command list 上执行 draw 和 dispatch 命令。在 execute phase 之前，所有资源都由不透明的抽象引用处理；到了 execute phase，才会访问真实的 GPU API 资源并把它们设置到管线中。CPU 侧 command list 的准备工作在很多情况下可以高度并行化，因为大多数 pass 的 command list 设置彼此独立。除此之外，在单个 command queue 上提交 command list 并不是线程安全的，而且无论如何，都应该先判断并行化是否真的能带来明显收益。
 
 #### Shader Types
 
-The base class for shaders is FShader, but we find two main types of shaders that we can use:
-- FGlobalShader: all the shaders deriving from it are part of the global shaders group. A global shader produces a single instance across the engine, and it can only use global parameters.
-- FMaterialShader: all the derived classes are the ones that use parameters tied to materials. If they also use parameters tied to the vertex factory, then the class to refer to is FMeshMaterialShader.
+shader 的基类是 `FShader`，但我们主要会使用两类 shader：
 
-Note* I’ll be using the Global Shader since I rendered inside the post processing pass. The Material shaders are heavily tied to a vertex factory, which I didn’t
-have time to cover and or experiment with. I will provide some resources for that in the reference section if you’re interested.
+- `FGlobalShader`：所有派生自它的 shader 都属于 global shaders 组。global shader 在整个引擎中生成单个实例，并且只能使用全局参数。
+- `FMaterialShader`：派生类会使用与材质绑定的参数。如果还使用与 vertex factory 绑定的参数，则应该参考 `FMeshMaterialShader`。
+
+注意：本文使用的是 Global Shader，因为示例在后处理 pass 中渲染。Material shader 与 vertex factory 强相关；这里没有时间展开和实验相关内容。如果你感兴趣，参考资料中提供了一些相关资源。
 
 ### Shader Parameters
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_ShaderParameterBinding.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_ShaderParameterBinding.png)
 
-The shader parameters are the objects that are gonna identify the resource slots used by a shader. These parameters are used when setting resources for a
-graphics compute or computer operation.
+Shader parameters 是用于标识某个 shader 所使用资源槽位的对象。在设置图形、计算或其他 GPU 操作的资源时会用到这些参数。
 
-The process of setting a shader parameter will consist in binding a resource to the command list at the index specified by the shader parameter.
+设置 shader parameter 的过程，本质上是在 command list 上，把某个资源绑定到 shader parameter 指定的索引位置。
 
-**Note*** if binding and context is confusing, this is because an understanding a lower level GPU and graphics API knowledge is probably missing. To address this
-I’ve given a brief explanation in the supplemental explanation section.
+**注意**：如果“绑定”和“上下文”这些概念让你困惑，通常说明还缺少一些更底层的 GPU 与图形 API 知识。本文在补充说明中给出了简要解释。
 
-We have the following types of Shader Parameters, as seen in `ShaderParametersUtils.h` and `ShaderParameters.h`:
+我们有以下几类 Shader Parameters，可在 `ShaderParametersUtils.h` 和 `ShaderParameters.h` 中看到：
 
-- **FShaderParameter**: shader parameter’s register binding. e.g. float1/2/3/4, can be an array, UAV.
+- **FShaderParameter**：shader 参数的寄存器绑定，例如 float1/2/3/4，也可以是数组或 UAV。
   
-- **FShaderResourceParameter**: shader resource binding (textures or samplerstates).
+- **FShaderResourceParameter**：shader resource 绑定，例如纹理或 sampler state。
   
-- **FRWShaderParameter**: class that binds either a UAV or SRV resource.
+- **FRWShaderParameter**：用于绑定 UAV 或 SRV 资源的类。
 
-- **TShaderUniformBufferParameter**: shader uniform buffer binding with a specific structure (templated). This parameter references a struct which contains all the resources defined for a specific shader. More info later.
+- **TShaderUniformBufferParameter**：带有特定结构的 shader uniform buffer 绑定（模板化）。这个参数引用一个 struct，其中包含某个 shader 定义的所有资源。后文会继续说明。
 
-As many cases in Unreal Engine, shader parameter classes use macros to define how they are composed. The most important part of the shader parameters is its
-Layout, an internal variable defined at compile time that specifies its structure, composed of `Layout Fields`.
+和 Unreal Engine 中许多地方一样，shader parameter 类通过宏定义自身组成方式。shader parameter 中最重要的部分是它的 Layout：这是编译期定义的内部变量，用于指定其结构，并由 `Layout Fields` 组成。
 
 ```cpp
 LAYOUT_FIELD(MyDataType, MyFiledName);
 LAYOUT_FIELD(FShaderResourceParameter, UAVParameter);
 ```
 
-The way the layout will be used depends on the type of shader parameters and it can contain any data (e.g. a parameter index). Its purpose is always to hold
-information about shader parameters (e.g. CBVs, SRVs, UAVs in D3D12) so that we can use them to bind to resources at the moment of executing the shader in
-the command list.
+layout 的使用方式取决于 shader parameter 类型，它可以包含任意数据（例如 parameter index）。它的目的始终是保存 shader parameter 相关信息（例如 D3D12 中的 CBV、SRV、UAV），这样在 command list 中执行 shader 时，就能用这些信息把资源绑定到正确位置。
 
 ### Shader Uniform Buffer Parameter
 
-The concept of `Uniform Buffer Parameter` in Unreal Engine is very different from what we are used to in standard computer graphics: here it is essentially
-defined as a struct of shader parameters.
+Unreal Engine 中 `Uniform Buffer Parameter` 的概念，与标准图形学中常见的 uniform buffer 不完全相同：这里它本质上是一个 shader parameter struct。
 
-Uniform Buffers, as previously mentioned in the RDG chapter, can be defined using a Shader Parameter Struct macro, either inside a shader class declaration or
-in global scope.
+如前面 RDG 章节提到的，Uniform Buffer 可以使用 Shader Parameter Struct 宏定义；它既可以放在 shader 类声明内部，也可以放在全局作用域。
 
 ```cpp
 BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters, )
@@ -217,19 +188,20 @@ BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters, )
 END_SHADER_PARAMETER_STRUCT()
 ```
 
-This family of macros is very flexible and it can contain:
+这一族宏非常灵活，可以包含：
 
-- **Shader Parameters**: textures, samplers, buffers and descriptors. For a full list of macros reference to ShaderParameterMacros.h.
-- **Nested Structs**: we can encapsulate the definition of a shader parameter struct into another. This is achieved using the macro `SHADER_PARAMETER_STRUCT(StructType,MemberName)` and `SHADER_PARAMETER_STRUCT_ARRAY(..)`.`
-- **Binding Slots**: Available with the macro `RENDER_TARGET_BINDING_SLOTS()` which adds an array of assignable Render Targets to the parameter struct we use.
+- **Shader Parameters**：纹理、sampler、buffer 和 descriptor。完整宏列表可参考 `ShaderParameterMacros.h`。
+- **Nested Structs**：可以把一个 shader parameter struct 封装到另一个 struct 中。这通过 `SHADER_PARAMETER_STRUCT(StructType,MemberName)` 和 `SHADER_PARAMETER_STRUCT_ARRAY(..)` 宏实现。
+- **Binding Slots**：通过 `RENDER_TARGET_BINDING_SLOTS()` 宏提供，它会向参数 struct 中添加一个可赋值 Render Target 数组。
 
-**Usage**
-- If defined outside a shader, the name “FMyShaderParameters” will usually be `F<MyPassName>` PassParameters. These shader parameter structs are used as Pass Parameters for the RDG, as described in the RDG section of this article.
-- If defined inside a shader class, the name “FMyShaderParameters” will usually be `FParameters`. We will also need to use this macro at the top of the shader class `SHADER_USE_PARAMETER_STRUCT(FMyShaderClass, FBaseClassFromWhatMyShaderDerivesFrom)`.
+**用法**
+- 如果定义在 shader 外部，`FMyShaderParameters` 通常会命名为 `F<MyPassName>PassParameters`。这类 shader parameter struct 会作为 RDG 的 Pass Parameters 使用，正如本文 RDG 部分所述。
+- 如果定义在 shader 类内部，`FMyShaderParameters` 通常会命名为 `FParameters`。此时还需要在 shader 类顶部使用宏 `SHADER_USE_PARAMETER_STRUCT(FMyShaderClass, FBaseClassFromWhatMyShaderDerivesFrom)`。
 
-**Set Shader Parameters**
+**设置 Shader Parameters**
 
-Most of the times when using a shader inside an RDG pass you can call
+大多数情况下，在 RDG pass 中使用 shader 时，可以调用：
+
 ```cpp
 SetShaderParameters(TRHICmdList& RHICmdList, const TShaderRef&lt;TShaderClass>& Shader, TShaderRHI* ShadeRHI, const typename
 TShaderClass::FParameters& Parameters)
@@ -237,22 +209,17 @@ TShaderClass::FParameters& Parameters)
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/RDG_SettingShaderParams.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/RDG_SettingShaderParams.png)
 
-from ShaderParameterStruct.h will be called to bind input resources to a specific shader.
+来自 `ShaderParameterStruct.h` 的逻辑会被调用，用于把输入资源绑定到特定 shader。
 
-The function will first call `ValidateShaderParameters(Shader, Parameters);` to check that all the input shader resources cover all the expected shader parameters.
-Then it will start to bind all the resources to the relative parameters: every parameter type listed at the beginning of this section (e.g. FShaderParameter,
-FShaderResourceParameter, etc.) will have their own call for getting bound to the command list. A scheme of when we set a uniform buffer resource is as follows:
+该函数会先调用 `ValidateShaderParameters(Shader, Parameters);`，检查所有输入 shader resource 是否覆盖了 shader 期望的全部参数。随后它会把所有资源绑定到对应参数上：本节开头列出的每种参数类型（例如 `FShaderParameter`、`FShaderResourceParameter` 等）都会有自己的绑定调用。设置 uniform buffer 资源时的整体流程可以概括如下：
 
-**BufferIndex** is used for all the `FParameterStructReference`, but also for the basic `FParameters` elements, since they are stored in buffers as well.
-What happens inside CmdList::SetUniformBuffer with such input parameters is completely up to the render platform we are using and it varies a lot from case to
-case.
+**BufferIndex** 会用于所有 `FParameterStructReference`，也会用于基础 `FParameters` 元素，因为它们同样存储在 buffer 中。`CmdList::SetUniformBuffer` 面对这些输入参数时具体如何执行，完全取决于当前使用的渲染平台，并且不同平台差异很大。
 
-### Shader Macro Usage & Setup
+### Shader 宏的使用与设置
 
 **Local Parameters**
 
-Starting with some Parameters, if we want to generate our own Uniform Buffer (Constant Buffer used by many shaders). Let’s show an example between HLSL
-declarations and our Macro Setup
+如果我们要从一些参数开始，生成自己的 Uniform Buffer（许多 shader 会使用的 Constant Buffer），可以先看 HLSL 声明与宏设置之间的对应关系：
 
 ```cpp
 float2 ViewPortSize;
@@ -268,7 +235,7 @@ SamplerState SceneColorSampler;
 RWTexture2D<float4> SceneColorOutput;
 ```
 
-as explained in the previous section we need to use an internal macro so we can bind these parameters.
+如上一节所述，我们需要使用内部宏来绑定这些参数。
 
 ```cpp
 BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters,)
@@ -284,27 +251,26 @@ BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters,)
 END_SHADER_PARAMETER_STRUCT()
 ```
 
-The macro `SHADER_PARAMETER_STRUCT` will fill in all the data internally to generate reflective data at compile time.
+`SHADER_PARAMETER_STRUCT` 宏会在内部填充所有数据，以便在编译期生成反射数据。
 
 ```cpp
 const FShaderParametersMetadata* ParametersMetadata = FShaderParameters::FTypeInfo::GetStructMetadata();
 ```
 
-**Alignment Requirements**
+**对齐要求**
 
-You need to conform to alignment. Unreal Adopts the principle of 16-byte automatic alignment, thus the order of any members matters when declaring that
-struct.
+你需要遵守对齐规则。Unreal 采用 16 字节自动对齐原则，因此声明 struct 时成员顺序很重要。
 
-The main rule is that each member is aligned to the next power of its size, but only if it larger that 4 Bytes. For example:
+主要规则是：每个成员会按其大小的下一个幂次对齐，但只在该成员大于 4 字节时适用。例如：
 
-Pointers are 8-byte aligned
-- float,uint32,int32 are 4-byte aligned
-- FVector2f, FIntPoint is 8-byte aligned
-- FVector and FVector4f are 16-byte aligned
+- 指针按 8 字节对齐。
+- `float`、`uint32`、`int32` 按 4 字节对齐。
+- `FVector2f`、`FIntPoint` 按 8 字节对齐。
+- `FVector` 和 `FVector4f` 按 16 字节对齐。
 
-if you don't follow this alignment engine with throw an assert statement at compile time.
+如果不遵守这些对齐规则，引擎会在编译期触发 assert。
 
-Automatic alignment of each member will be inevitably create padding, as indicated below:
+每个成员的自动对齐不可避免地会产生 padding，如下所示：
 
 ```cpp
 BEGIN_SHADER_PARAMETER_STRUCT(FMyShaderParameters,)
@@ -331,9 +297,9 @@ SHADER_PARAMETER(float,WorldRadius) // Good
 SHADER_PARAMETER_ARRAY(FVector4f,WorldPositionRadius,[16]) // Good
 ```
 
-**Binding the shader**
+**绑定 shader**
 
-After we’ve setup the shader parameters and alignment is all good declare it with
+设置好 shader 参数并确认对齐无误后，可以用下面的方式声明：
 
 ```cpp
 SHADER_USE_PARAMETER_STRUCT(FMyShaderCS,FGlobalShader)
@@ -394,7 +360,7 @@ RHICmdList.DispatchComputeShader(GroupCount.X,GroupCount.Y,GroupCount.Z);
 
 **Global Uniform Buffer**
 
-Process is the same with some small differences
+流程基本相同，只是有一些小差异。
 
 ```cpp
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FSceneTextureUniformParameters,/*Blah_API*/)
@@ -415,16 +381,16 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FSceneTextureUniformParameters,/*Blah_API*/
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 ```
 
-After the struct setup you need to call the implement macro, following the string is the real name defined in the HLSL file.
+struct 设置完成后，需要调用 implement 宏；后面的字符串是在 HLSL 文件中定义的真实名称。
 
 ```cpp
 IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FSceneTexturesUniformParameters,"SceneTextureStruct");
 ```
 
-Now inside the Unreal system, Common.ush will refer to the code generated, you will see this Common.ush get included in a lot of HLSL files. There are other
-includes that you can use that have some useful functions for render code.
+在 Unreal 系统内部，`Common.ush` 会引用生成出来的代码；你会在很多 HLSL 文件中看到 `Common.ush` 被 include。还有其他 include 文件提供了渲染代码中常用的实用函数。
 
-Now the uniform buffer we set can be accessed anywhere
+现在，我们设置的 uniform buffer 可以在任何地方访问：
+
 ```cpp
 // Generated file that contains the unifrom buffer declarations that we need to compile the shader want
 #include "/Engine/Generated/GeneratedUniformBuffers.ush"
@@ -432,7 +398,7 @@ Now the uniform buffer we set can be accessed anywhere
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/SceneTextureStruct.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/563954a23906d392d55727b1132446abdd73d0dd/Diagrams/SceneTextureStruct.png)
 
-Now reference our uniform buffer inside our Parameter struct
+现在在 Parameter struct 中引用我们的 uniform buffer：
 
 ```cpp
 BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
@@ -442,7 +408,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
 END_SHADER_PARAMETER_STRUCT()
 ```
 
-Again setup the parameter in C++ before passing into the Lambda Function
+同样，在把参数传入 Lambda Function 之前，先在 C++ 中完成设置：
 
 ```cpp
 FMyShaderParameters* PassParameters = GraphBuilder.AllocParameters<FDMyShaderParameters>();
@@ -451,4 +417,3 @@ PassParameters.World = 1.0f;
 PassParameters.FooBarArray[4] = FVector(1.0f,0.5f,0.5f);
 PassParameters.ViewUniformBuffer = View.ViewUniformBuffer;
 ```
-

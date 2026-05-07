@@ -1,24 +1,20 @@
-# Scene View Extension Triangle Shader
+# Scene View Extension 三角形 Shader
+
+> 出处：本文档翻译自 staticJPL 的 **Render Dependency Graph Documentation** 项目，原仓库：https://github.com/staticJPL/Render-Dependency-Graph-Documentation 。翻译在尊重原意的基础上，对部分表述做了中文化整理。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/Triangle Render.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/5110a92b8c25e1eab6f28e73456570649c2d0470/Diagrams/Triangle%20Render.png)
 
-With this knowledge the next step is to put it into practice. The “Hello World” of graphics programming is to draw a basic triangle using the Vertex Shader and
-Pixel Shader. Drawing a triangle in Unreal Engine encapsulates the process for rendering anything in the Engine itself.
+有了前面的知识，下一步就是把它用于实践。图形编程里的 “Hello World” 通常是使用 Vertex Shader 和 Pixel Shader 绘制一个基础三角形。在 Unreal Engine 中绘制三角形，也能概括引擎内部渲染任意内容时需要经历的核心流程。
 
-This section will cover how to create a render pass to draw this triangle in a step by step tutorial using the Render Dependency Graph in Unreal engine.
+本节会以逐步教程的方式，讲解如何在 Unreal Engine 中使用 Render Dependency Graph 创建一个绘制三角形的 render pass。
 
-## Plugin/Module & Shader Folder Setup
+## Plugin / Module 与 Shader 文件夹设置
 
-Using a Plugin or Module depends on your use case but the important thing to know is that both “Startup Module” or “Initialize” functions in the Plugin or
-Module allow you to run code before Unreal Engine is fully initialized. The reason this matters is because Unreal’s Renderer is a Module. If you don’t understand
-Modules and the Engine Life Cycle, I recommend doing a little reading on it to give yourself a better understanding of the runtime linking of modules. The
-Renderer is linked at runtime so shader code is compiled right before the editor starts up.
+使用 Plugin 还是 Module 取决于你的具体场景，但关键点在于：Plugin 或 Module 中的 “Startup Module” / “Initialize” 函数允许你在 Unreal Engine 完全初始化之前运行代码。这一点很重要，因为 Unreal 的 Renderer 本身就是一个 Module。如果你不理解 Module 和引擎生命周期，建议先阅读相关内容，以便理解模块的运行时链接方式。Renderer 会在运行时链接，因此 shader 代码会在编辑器启动之前编译。
 
-**Plugin Setup**
+**Plugin 设置**
 
-Go ahead and create a basic C++ project in Unreal Engine, First Person shooter will suffice.
-Once you’ve create the project, navigate to your folder structure and add a Shader Folder.
-Here is a rough example of what it looks like
+先在 Unreal Engine 中创建一个基础 C++ 项目，First Person 模板即可。创建项目后，进入项目目录并添加一个 Shader 文件夹。下面是一个大致的目录结构示例：
 
 ```
 ├── YourProjectName
@@ -36,8 +32,7 @@ Here is a rough example of what it looks like
 ……….└──> YourPluginName.uplugin
 ```
 
-
-Go to the PluginName.Build.cs file and ensure the dependencies are there.
+进入 `PluginName.Build.cs` 文件，确保依赖项已添加。
 
 ```cpp
 using UnrealBuildTool;
@@ -95,7 +90,7 @@ public class YourPluginName : ModuleRules
 
 ```
 
-Next set the modules loading phase inside YourPluginName.uplugin to “PostConfigInit”
+接下来，在 `YourPluginName.uplugin` 中把模块加载阶段设置为 `PostConfigInit`。
 
 ```cpp
 {
@@ -124,7 +119,7 @@ Next set the modules loading phase inside YourPluginName.uplugin to “PostConfi
 }
 ```
 
-The next step is to bind the shader folder with Unreal so it can find and compile our custom shader code.
+下一步是把 shader 文件夹映射到 Unreal，让引擎可以找到并编译我们的自定义 shader 代码。
 
 ```cpp
 void FYourPluginNameModule::StartupModule()
@@ -142,18 +137,13 @@ void FYourPluginNameModule::ShutdownModule()
 IMPLEMENT_MODULE(FYourPluginNameModule, YourPluginNamePlugin)
 ```
 
-You need to include "Interfaces/IPluginManager.h" so you can get access to the helper functions that grabs the base directory to your plugin shader folder
-directory. The `“AddShaderSourceDirectoryMapping(TEXT("/CustomShaders")`, PluginShaderDir)” line basically binds a` virtual folder` called “/CustomShaders” I
-don’t think the name matters but you can name it whatever. I could be wrong.
+你需要 include `Interfaces/IPluginManager.h`，这样才能使用辅助函数获取插件 shader 文件夹的 base directory。`AddShaderSourceDirectoryMapping(TEXT("/CustomShaders"), PluginShaderDir)` 这一行本质上把一个名为 `/CustomShaders` 的虚拟文件夹绑定到插件 shader 目录。我认为这个名字不重要，可以按需要命名；当然也可能有我没有覆盖到的限制。
 
-Next go into YourPlugin Folder to add a MyViewExtensionSubSystem.cpp file and MyViewExtensionSubSystem.h inside your Private and Public folder
-respectively. 
+接下来进入 YourPlugin 文件夹，在 Private 和 Public 文件夹中分别添加 `MyViewExtensionSubSystem.cpp` 和 `MyViewExtensionSubSystem.h`。
 
-The subsystem is ideal to create a custom FSceneViewExtensionBase pointer to this is object during `PostConfigInit` phase. This allows us to draw our
-triangle to the editor viewport. You could declare a` TSharedPtr<FMyViewExtension, ESPMode::ThreadSafe>` object in MyCharacter.h and instantiate it in
-`BeginPlay`. So it renders the triangle after pressing play in the editor.
+Subsystem 很适合在 `PostConfigInit` 阶段创建一个自定义 `FSceneViewExtensionBase` 指针对象。这样我们就能把三角形绘制到编辑器 viewport。你也可以在 `MyCharacter.h` 中声明一个 `TSharedPtr<FMyViewExtension, ESPMode::ThreadSafe>` 对象，并在 `BeginPlay` 中实例化它，这样三角形会在编辑器中点击 Play 之后渲染。
 
-**Module Setup**
+**Module 设置**
 
 **MyViewExtensionSubSystem.cpp**
 
@@ -199,13 +189,11 @@ class MyViewExtensionSubSystem: public UEngineSubsystem
 
 ### FSceneViewExtensionBase
 
-This base class is important because it allows you to hook into the render pipeline and use its delegates to insert your own custom render pass. Before `5.1`, in
-order to create your own custom rendering pass a plugin or module was still needed to initialize your shader folder. However without this class you will need to
-do additional C++ work to add your own delegates inside the render pipeline source code for a custom rendering pass. 
+这个基类很重要，因为它允许你挂接到渲染管线，并通过它提供的 delegate 插入自定义 render pass。在 `5.1` 之前，创建自定义渲染 pass 仍然需要 plugin 或 module 来初始化 shader 文件夹；但如果没有这个类，你还需要额外修改渲染管线源码，在其中加入自己的 delegate，才能插入自定义渲染 pass。
 
-In this tutorial we will be overriding a delegate function in the FSceneViewExtensionBase class to insert a pass in Post Processing phase of the render pipeline.
+在本教程中，我们会重写 `FSceneViewExtensionBase` 类中的一个 delegate 函数，把 pass 插入到渲染管线的 Post Processing 阶段。
 
-In Engine Source at line 411 inside PostProcessing.cpp the delegates of FSceneViewExtensionBase are added.
+在引擎源码 `PostProcessing.cpp` 第 411 行附近，会添加 `FSceneViewExtensionBase` 的 delegate。
 
 ```cpp
 // ../Engine../PostProcessing.cpp"
@@ -234,14 +222,11 @@ const auto AddAfterPass = [&](EPass InPass, FScreenPassTexture InSceneColor) -> 
 }
 ```
 
+在 `AddAfterPass` 中可以看到，`FScreenPassTexture InSceneColor` 会把 “SceneColor” 的引用传给被重写的 delegate。`SceneColor` 是一个 `FScreenPassTexture`，描述了一张纹理以及与其配对的 viewport rect。Scene Color 纹理会在整个 PostProcessing 管线中被多次写入，也会成为我们绘制三角形的目标纹理。它就是我们的 “Render Target”。
 
-You see at `AddAfterPass`, `FScreenPassTexture` `InSceneColor` is passing a reference of “SceneColor” to the delegates overridden.` SceneColor` is a
-`FScreenPassTexture` that describes a texture paired with a viewport rect. The Scene Color texture is written too many times throughout PostProcessing pipeline
-and will be the texture we will draw our triangle onto. This will be our “Render Target”.
+**类设置**
 
-**Class Setup**
-
-Let’s create another class header and CPP file inside our plugin public/private source folder. Call it MyViewExtension (or whatever you like).
+在插件的 public/private 源码文件夹中再创建一个头文件和 CPP 文件，命名为 `MyViewExtension`（或你喜欢的其他名字）。
 
 ```cpp
 #pragma once
@@ -265,9 +250,9 @@ class YOURPLUGINNAME_API FMyViewExtension : public FSceneViewExtensionBase {
 };
 ```
 
-Here we have a couple delegates denoted with `_RenderThread` and other setup functions. We will be overriding `SubscribeToPostProcessingPass` only.
+这里有几个带 `_RenderThread` 后缀的 delegate，以及一些 setup 函数。本文只重写 `SubscribeToPostProcessingPass`。
 
-Let’s setup some functions in the MyViewExtension.cpp file.
+接下来在 `MyViewExtension.cpp` 中设置一些函数。
 
 ```cpp
 #include "ViewExtension.h"
@@ -296,22 +281,18 @@ InOutPassCallbacks, bool bIsPassEnabled)
 }
 ```
 
-Inside `SubscribeToPostProcessingPass` function I want to bring attention to the if statement. The if statement uses `EPostProcessing` Enum to define where in the
-Post Processing phase you want to insert a render pass. I’ve opted to do it after `Tonemap`, however you can choose other points in the pipeline defined by that
-enum. For now the goal is to draw the triangle to the Scene Color since it’s available during the entire Post Process Pass.
+在 `SubscribeToPostProcessingPass` 函数中，我想强调这个 if 语句。它使用 `EPostProcessing` 枚举来定义你要在 Post Processing 阶段的哪个位置插入 render pass。这里我选择放在 `Tonemap` 之后；不过你也可以选择枚举中定义的其他位置。当前目标是把三角形绘制到 Scene Color 上，因为它在整个 Post Process Pass 期间都可用。
 
-### Setting up Global Shaders
+### 设置 Global Shader
 
-The next step is to create two Global shaders. One being our custom Vertex shader that handles the triangle vertex data stored in the vertex buffer. The second
-shader being a pixel shader which will color our triangle after the rasterizer processed our vertices.
+下一步是创建两个 Global shader。第一个是自定义 Vertex Shader，用来处理顶点缓冲中存储的三角形顶点数据；第二个是 Pixel Shader，用来在光栅化器处理顶点之后给三角形着色。
 
-Again, inside the Plugin source folder we create a separate cpp/header file.
-TriangleShader.cpp and TriangleShader.h
+同样，在插件源码文件夹中创建单独的 cpp/header 文件：`TriangleShader.cpp` 和 `TriangleShader.h`。
 
-**Vertex Shader Class**
+**Vertex Shader 类**
 
 ```cpp
-// TrangleShader.h
+// TriangleShader.h
 // Defined here so we can access it in View Extension.
 BEGIN_SHADER_PARAMETER_STRUCT(FTriangleVSParams,)
 //RENDER_TARGET_BINDING_SLOTS()
@@ -329,13 +310,12 @@ class FTriangleVS : public FGlobalShader
 };
 ```
 
-Keeping it simple we aren’t creating any new crazy macro specific buffers or resources for the vertex shader. The RDG at minimum requires the macro
-declaration.
+这里保持简单：我们没有为顶点着色器创建任何复杂的宏专用 buffer 或资源。RDG 至少需要这个宏声明。
 
-**Pixel Shader Class**
+**Pixel Shader 类**
 
 ```cpp
-// TrangleShader.h
+// TriangleShader.h
 BEGIN_SHADER_PARAMETER_STRUCT(FTrianglePSParams,)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
@@ -347,16 +327,13 @@ class FTrianglePS: public FGlobalShader
 };
 ```
 
+`RENDER_TARGET_BINDING_SLOTS()` 是这里唯一传入的资源；我们会把 viewport 信息或 Render Target 绑定到自定义 shader HLSL 代码。
 
-`RENDER_TARGET_BINDING_SLOTS()` is the only resource we are passing, we are binding the viewport information or Render Target to our custom shader HLSL
-code.
+在两个类中，都需要把它们声明为 global shader，并定义 shader 所需的本地参数 struct。在 C++ 中，`using` 会让 `FParameters` 这个类型别名指向 `FTrianglePSParams`，这样在其他地方声明该类型指针时可以使用它。
 
-In both classes we need to declare them as global shaders and define the local parameter struct the shader needs. In C++ “using” gives access to the type
-FParamters as `FTrianglePSParams` when declaring a pointer of that type for use elsewhere.
+现在把 Triangle HLSL 代码添加到 Shader 文件夹。
 
-Let’s add the Triangle HLSL code in our Shader Folder.
-
-Go into the Shader folder and create a file called `Triangle.usf` then paste the code below and save it.
+进入 Shader 文件夹，创建 `Triangle.usf` 文件，然后粘贴并保存下面的代码。
 
 ```c
 #include "/Engine/Public/Platform.ush"
@@ -382,18 +359,17 @@ OutColor = InColor;
 }
 ```
 
-### Creating Vertex and Index Buffers
+### 创建 Vertex Buffer 和 Index Buffer
 
-At this point we’ve introduced mostly all the classes involved in the Rendering Pass. We still need to define the resources classes for our `Vertex Buffer` and `Index
-`Buffer`.`
+到这里，我们已经介绍了渲染 pass 涉及的大多数类。接下来还需要为 `Vertex Buffer` 和 `Index Buffer` 定义资源类。
 
-Inside `TrangleShader.h`
+在 `TriangleShader.h` 中：
 
-Add a struct the defines our Colored Vertex
+添加一个 struct，用来定义带颜色的顶点。
 
 ```cpp
 /** The vertex data used to filter a texture. */
-// TrangleShader.h
+// TriangleShader.h
 struct FColorVertex
 {
 public:
@@ -402,10 +378,10 @@ public:
 };
 ```
 
-Add the `FVertexBuffer` class
+添加 `FVertexBuffer` 类。
 
 ```cpp
-// TrangleShader.h
+// TriangleShader.h
 /**
 * Static vertex and index buffer used for 2D screen rectangles.
 */
@@ -428,14 +404,12 @@ public:
 };
 ```
 
-Inside `FTriangleVertexBuffer` override `InitRHI` to initialize the vertex data. In GPU programming you need to create a context so you can bind resources from the
-CPU before doing a memory copy to the GPU. In order to achieve this a context must be specified holding the name of the resource, size and other properties.
-Set `VertexBufferRHI` object with `RHICreateVertexBuffer` and pass the required information.
+在 `FTriangleVertexBuffer` 中重写 `InitRHI` 来初始化顶点数据。在 GPU 编程中，你需要创建一个上下文，以便在把资源从 CPU 拷贝到 GPU 之前完成绑定。为此，需要指定一个 context，其中包含资源名称、大小和其他属性。这里通过 `RHICreateVertexBuffer` 创建顶点缓冲，并把必要信息传给 `VertexBufferRHI`。
 
-Adding the Index Buffer
+添加 Index Buffer：
 
 ```cpp
-// TrangleShader.h
+// TriangleShader.h
 class FTriangleIndexBuffer : public FIndexBuffer
 {
 public:
@@ -453,16 +427,14 @@ public:
 };
 ```
 
-Same process here, you don’t need to use a `index buffer` for something a simple as a triangle. Index buffers hold pointers to our vertex data in the vertex buffer.
+流程类似。对于绘制这么简单的三角形，并不一定必须使用 `index buffer`。索引缓冲保存的是指向顶点缓冲中顶点数据的索引。
 
-Usually the index buffer will read a combination of three vertices, but you can make any combination you want. This is optimal because we can reuse vertex data
-to draw a triangle, quad or other primitives depending on your use case.
+通常索引缓冲会读取三个顶点的一组组合，不过你可以按需要创建任意组合。这种方式更高效，因为我们可以复用顶点数据，根据场景需求绘制三角形、四边形或其他图元。
 
-Lastly add a global declaration resource for the `Vertex Buffer`, this is used to define the input layout for the` Input assembler` so we can bind the correct
-attributes in the HLSL code.
+最后，为 `Vertex Buffer` 添加一个全局声明资源。它用于定义 `Input assembler` 的输入布局，这样我们才能把 HLSL 代码中的属性正确绑定到顶点数据。
 
 ```cpp
-// TrangleShader.h
+// TriangleShader.h
 class FTriangleVertexDeclaration : public FRenderResource
 {
 public:
@@ -484,15 +456,13 @@ public:
 };
 ```
 
+这里同样重写 `InitRHI` 来设置声明信息。对于输入布局，我们会定义 elements 对象和 `stride`。在图形学中，`stride` 指的是内存数组里一个元素起始地址到下一个元素起始地址之间的字节数。
 
-Again we override `InitRHI` to set our declaration information. For the input layout we define an elements object and the `stride`. In computer graphics the `stride`
-refers to the number of bytes between the start of one element and the start of the next element in an array of elements stored in memory. 
+为了让输入装配器正确读取 `vertex buffer`，它需要知道一个顶点起始位置到下一个顶点起始位置之间有多少字节。
 
-For the input assembler to read the `vertex buffer` properly it needs to know the number of bytes between the start of one vertex and the start of the next vertex. 
+我们可以使用 `sizeof` 函数计算单个顶点占用的空间，并把它作为后续顶点的偏移。你也会看到 `STRUCT_OFFSET`，它是一个辅助宏，用来确定 struct 中不同字段之间的偏移。
 
-We can use `sizeof` function to compute the space of one vertex as an offset for next vertices. You also notice `STRUCT_OFFSET` is a macro helper to determine the offset between the values defined in our struct.
-
-Next declare the resource global and extern them so the Renderer API can see it.
+接下来把资源声明为 global，并用 extern 暴露出来，让 Renderer API 能够看到它。
 
 ```cpp
 // TriangleShader.h
@@ -501,7 +471,7 @@ extern YOURPLUGIN_API TGlobalResource<FTriangleIndexBuffer> GTriangleIndexBuffer
 extern YOURPLUGIN_API TGlobalResource<FTriangleVertexDeclaration> GTriangleVertexDeclaration;
 ```
 
-back in `Triangle.cpp` declare the starting points for our shaders to match the function names in HLSL.
+回到 `Triangle.cpp`，声明 shader 入口点，使其与 HLSL 中的函数名匹配。
 
 ```cpp
 #include "TriangleShader.h"
@@ -519,11 +489,11 @@ TGlobalResource<FTriangleIndexBuffer> GTriangleIndexBuffer;
 TGlobalResource<FTriangleVertexDeclaration> GTriangleVertexDeclaration;
 ```
 
-Lastly define our `TGlobalResources` objects.
+最后定义我们的 `TGlobalResources` 对象。
 
-### Adding an RDG Pass
+### 添加 RDG Pass
 
-Returning to update your MyViewExtension cpp/header files.
+现在回到 `MyViewExtension` 的 cpp/header 文件继续更新。
 
 ```cpp
 // MyViewExtension.h
@@ -579,15 +549,13 @@ public:
 };
 ```
 
-Remember the order starts with adding a pass by giving the RDG lambda function the resources and parameters it needs. Next is defining the draw call(s) where
-you setup the GPU Pipeline. 
+请记住整个顺序：首先添加一个 pass，把 RDG lambda 函数所需的资源和参数交给它；接着定义 draw call，在其中设置 GPU Pipeline。
 
-You **MUST** setup the GPU pipeline because it defines all the parameters for the draw call (Blend States, Rasterizer State, Primitive type, Shaders, Viewport, Render Targets, Commands). 
+你**必须**设置 GPU pipeline，因为它定义了 draw call 所需的全部参数（Blend State、Rasterizer State、Primitive Type、Shader、Viewport、Render Target、Commands）。
 
-The GPU Pipeline stores the state to be interpreted for the low lever graphics API calls being used.
+GPU Pipeline 会保存当前状态，并把这些状态解释为底层图形 API 调用。
 
-First function is the templated `AddFullscreenPass` with the required parameters needed for the lambda function, nulling parameters we won’t use for the draw
-call.
+第一个函数是模板化的 `AddFullscreenPass`。它包含 lambda 函数所需的参数，并把这次 draw call 中不用的参数置空。
 
 ```cpp
 // MyViewExtension.cpp
@@ -621,8 +589,7 @@ void FMyViewExtension::AddFullscreenPass(
 }
 ```
 
-
-### Setup the Draw Call
+### 设置 Draw Call
 
 ```cpp
 template <typename TShaderClass>
@@ -669,7 +636,7 @@ void FMyViewExtension::DrawFullscreenPixelShader(
 
 ```
 
-I created a `RenderTriangle` function to wrap my Add Pass and Draw Call Functions
+我创建了一个 `RenderTriangle` 函数，用来封装 Add Pass 和 Draw Call 相关逻辑。
 
 ```cpp
 // FMyViewExtension.cpp
@@ -692,16 +659,16 @@ void FMyViewExtension::RenderTriangle(
     // Add Pass
     AddFullscreenPass<FTrianglePS>(GraphBuilder,
         ViewShaderMap,
-        RDG_EVENT_NAME("TranglePass"),
+        RDG_EVENT_NAME("TrianglePass"),
         PixelShader,
         PassParams,
         ViewInfo);
 }
 ```
 
-### Binding the Delegate
+### 绑定 Delegate
 
-I created the `TrianglePass_RenderThread` function.
+我创建了 `TrianglePass_RenderThread` 函数。
 
 ```cpp
 FScreenPassTexture FMyViewExtension::TrianglePass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs)
@@ -721,9 +688,9 @@ FScreenPassTexture FMyViewExtension::TrianglePass_RenderThread(FRDGBuilder& Grap
 }
 ```
 
-Before calling `RenderTriangle`, you need to get the `SceneColor` texture and perform a couple `static_casts`; one for the viewport dimensions and the other for a pointer to the global shader map. The global shader map points to our custom shader objects we declared using the global macros.
+在调用 `RenderTriangle` 之前，需要先取得 `SceneColor` 纹理，并执行两次 `static_cast`：一次用于获取 viewport 尺寸，另一次用于获取指向 global shader map 的指针。global shader map 指向我们使用 global 宏声明的自定义 shader 对象。
 
-Lastly add the delegate function `TrianglePass_RenderThread` inside the if statement I talked about before.
+最后，把 delegate 函数 `TrianglePass_RenderThread` 添加到前面提到的 if 语句中。
 
 ```cpp
 void FLensFlareSceneView::SubscribeToPostProcessingPass(EPostProcessingPass Pass, FAfterPassCallbackDelegateArray&
@@ -736,10 +703,8 @@ InOutPassCallbacks, bool bIsPassEnabled)
 }
 ```
 
-**Compile**
+**编译**
 
-You should see the triangle drawn to the viewport of your editor.
+现在应该能在编辑器 viewport 中看到绘制出来的三角形。
 
 ![[Unreal Engine Render Dependency Graph/Diagrams/TriangleOutput.png]](https://github.com/staticJPL/Render-Dependency-Graph-Documentation/blob/5110a92b8c25e1eab6f28e73456570649c2d0470/Diagrams/TriangleOutput.png)
-
-
